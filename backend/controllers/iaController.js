@@ -49,7 +49,16 @@ consultar_dia,
 organizar_semana,
 recomendacion_hoy,
 crear_planning,
+consultar_tareas_atrasadas,
+consultar_tareas_importantes,
+buscar_tareas,
+consultar_semana,
+consultar_proximos_7_dias,
+consultar_mes,
+consultar_dia_mas_ocupado,
+adelantar_tareas,
 responder.
+
 
 Categorías disponibles:
 ${categoriasTexto}
@@ -77,12 +86,21 @@ Reglas:
 - El campo "titulo" nunca debe ser el nombre ni la descripción de una categoría.
 - El título debe ser solo la actividad principal del usuario.
 - Si pregunta qué tareas tiene pendientes -> consultar_tareas.
+- Si pregunta por una categoría, tema o asunto concreto -> buscar_tareas.
+- Ejemplos: médico, salud, trabajo, react, gimnasio, estudios.
 - Si pregunta por sus tareas -> consultar_tareas.
 - Si pregunta qué tiene pendiente -> consultar_tareas.
 - Si pregunta qué tiene hoy, mañana, pasado mañana o un día de la semana -> consultar_dia.
 - Si el usuario dice "organízame la semana", "organiza mi semana", "hazme un horario semanal", "planifica mi semana" o "qué debería hacer esta semana" -> organizar_semana.
 - Si el usuario dice "qué hago hoy", "que hago hoy", "qué debería hacer hoy", "que deberia hacer hoy", "recomiéndame el día", "recomiendame el dia", "organizame el día", "organízame el día", "organiza mi día" o "organiza mi dia" -> recomendacion_hoy.
 - Si el usuario dice "hazme un planning", "hazme un plan", "créame un planning", "crea un planning", "organízame un planning" o "plan de estudio", "plan de ejercicio", "planning de ejercicio" -> crear_planning.
+- Si pregunta por tareas atrasadas, vencidas, caducadas o retrasadas -> consultar_tareas_atrasadas.
+- Si pregunta por tareas importantes, urgentes, prioritarias o de prioridad alta -> consultar_tareas_importantes.
+- Si pregunta "qué tengo esta semana", "qué hay esta semana", "qué me queda esta semana" o "agenda de esta semana" -> consultar_semana.
+- Si pregunta "qué tengo los próximos 7 días", "qué tengo en los próximos 7 días", "qué tengo la próxima semana" o "qué tengo en 7 días" -> consultar_proximos_7_dias.
+- Si pregunta "qué tengo este mes", "agenda de este mes", "qué hay este mes" o "qué me queda este mes" -> consultar_mes.
+- Si pregunta cuál es su día más ocupado, qué día tiene más cosas o cuándo está más ocupado -> consultar_dia_mas_ocupado.
+- Si pregunta "qué puedo adelantar hoy", "puedo adelantar algo", "qué puedo avanzar hoy" o "qué tarea puedo adelantar" -> adelantar_tareas.
 - Limpia el título.
 
 Fechas:
@@ -202,6 +220,8 @@ const obtenerFecha = (mensaje, fechaIA, usarHoyPorDefecto = false) => {
     : 'Sin fecha'
 }
 
+
+
 export const responderIA = async (req, res) => {
   try {
     const { mensaje } = req.body
@@ -214,7 +234,142 @@ export const responderIA = async (req, res) => {
 
     const textoMensaje = mensaje.toLowerCase()
 
+    const categoriasBusqueda = [
+  'salud',
+  'trabajo',
+  'estudio',
+  'deporte',
+  'deportes',
+  'react',
+  'médico',
+  'medico',
+  'gimnasio',
+  'viaje',
+  'viajes',
+]
+
+const categoriaDetectada = categoriasBusqueda.find((categoria) =>
+  textoMensaje.includes(categoria)
+)
+
+const esConsultaEventos =
+  textoMensaje.includes('evento') ||
+  textoMensaje.includes('eventos') ||
+  textoMensaje.includes('agenda') ||
+  textoMensaje.includes('cita') ||
+  textoMensaje.includes('citas')
+
 if (
+  categoriaDetectada &&
+  (
+    textoMensaje.includes('que tengo') ||
+    textoMensaje.includes('qué tengo') ||
+    textoMensaje.includes('pendiente')
+  )
+) {
+  if (esConsultaEventos) {
+    const eventos = await pool.query(
+      `SELECT titulo, categoria, fecha, hora
+       FROM eventos
+       WHERE
+         LOWER(categoria) LIKE LOWER($1)
+         OR LOWER(titulo) LIKE LOWER($1)
+       ORDER BY fecha ASC`,
+      [`%${categoriaDetectada}%`]
+    )
+
+    const respuesta = eventos.rows.length
+      ? `📅 Eventos relacionados con "${categoriaDetectada}":\n\n` +
+        eventos.rows
+          .map((e) => `• ${e.titulo} - ${e.fecha} ${e.hora || ''}`)
+          .join('\n')
+      : `No tienes eventos relacionados con "${categoriaDetectada}".`
+
+    return res.json({
+      respuesta,
+      accion: 'buscar_eventos_categoria',
+    })
+  }
+
+  const tareas = await pool.query(
+    `SELECT titulo, categoria, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND (
+       LOWER(categoria) LIKE LOWER($1)
+       OR LOWER(titulo) LIKE LOWER($1)
+     )
+     ORDER BY fecha ASC`,
+    [`%${categoriaDetectada}%`]
+  )
+
+  const eventos = await pool.query(
+    `SELECT titulo, categoria, fecha, hora
+     FROM eventos
+     WHERE
+       LOWER(categoria) LIKE LOWER($1)
+       OR LOWER(titulo) LIKE LOWER($1)
+     ORDER BY fecha ASC`,
+    [`%${categoriaDetectada}%`]
+  )
+
+  if (tareas.rows.length === 0 && eventos.rows.length === 0) {
+    return res.json({
+      respuesta: `No tienes nada relacionado con "${categoriaDetectada}".`,
+      accion: 'buscar_tareas_eventos',
+    })
+  }
+
+  let respuesta = `🔎 He encontrado cosas relacionadas con "${categoriaDetectada}":\n\n`
+
+  if (tareas.rows.length > 0) {
+    respuesta += '✅ Tareas:\n'
+    respuesta += tareas.rows
+      .map((t) => `• ${t.titulo} (${t.prioridad}) - ${t.fecha || 'Sin fecha'}`)
+      .join('\n')
+    respuesta += '\n\n'
+  }
+
+  if (eventos.rows.length > 0) {
+    respuesta += '📅 Eventos:\n'
+    respuesta += eventos.rows
+      .map((e) => `• ${e.titulo} - ${e.fecha} ${e.hora || ''}`)
+      .join('\n')
+  }
+
+  return res.json({
+    respuesta,
+    accion: 'buscar_tareas_eventos',
+  })
+}
+
+    const palabrasBusqueda = [
+  'salud',
+  'trabajo',
+  'estudio',
+  'deporte',
+  'deportes',
+  'react',
+  'médico',
+  'medico',
+  'gimnasio',
+  'viaje',
+  'viajes',
+]
+
+const esBusqueda =
+  textoMensaje.includes('que tengo') ||
+  textoMensaje.includes('qué tengo') ||
+  textoMensaje.includes('pendiente')
+
+
+
+    
+
+if (
+  !textoMensaje.includes('adelantar') &&
+  !textoMensaje.includes('avanzar') &&
+
   !textoMensaje.includes('que hago hoy') &&
   !textoMensaje.includes('qué hago hoy') &&
   !textoMensaje.includes('que debería hacer hoy') &&
@@ -338,6 +493,8 @@ return res.json({
 
     let decision = null
 
+    
+
 if (
   textoMensaje.includes('organizame la semana') ||
   textoMensaje.includes('organízame la semana') ||
@@ -356,6 +513,56 @@ if (
 } else {
   decision = await pedirJSONaOllama(mensaje)
 }
+
+if (
+  textoMensaje.includes('esta semana') ||
+  textoMensaje.includes('semana actual')
+) {
+  decision.accion = 'consultar_semana'
+}
+
+if (
+  textoMensaje.includes('este mes') ||
+  textoMensaje.includes('mes actual')
+) {
+  decision.accion = 'consultar_mes'
+}
+
+if (
+  textoMensaje.includes('día más ocupado') ||
+  textoMensaje.includes('dia mas ocupado') ||
+  textoMensaje.includes('más ocupado') ||
+  textoMensaje.includes('mas ocupado') ||
+  textoMensaje.includes('qué día tengo más cosas') ||
+  textoMensaje.includes('que dia tengo mas cosas')
+) {
+  decision.accion = 'consultar_dia_mas_ocupado'
+}
+
+if (
+  textoMensaje.includes('qué puedo adelantar') ||
+  textoMensaje.includes('que puedo adelantar') ||
+  textoMensaje.includes('puedo adelantar algo') ||
+  textoMensaje.includes('qué puedo avanzar') ||
+  textoMensaje.includes('que puedo avanzar') ||
+  textoMensaje.includes('qué tarea puedo adelantar') ||
+  textoMensaje.includes('que tarea puedo adelantar')
+) {
+  decision.accion = 'adelantar_tareas'
+}
+
+if (
+  textoMensaje.includes('próximos 7 días') ||
+  textoMensaje.includes('proximos 7 dias') ||
+  textoMensaje.includes('próxima semana') ||
+  textoMensaje.includes('proxima semana') ||
+  textoMensaje.includes('en 7 dias') ||
+  textoMensaje.includes('en 7 días')
+) {
+  decision.accion = 'consultar_proximos_7_dias'
+}
+
+console.log('DECISION:', decision)
 
 
 
@@ -461,14 +668,463 @@ if (
     .trim()
 }
 
-if (decision.accion === 'consultar_tareas') {
+if (decision.accion === 'consultar_semana') {
+  const hoy = new Date()
+  const fechaInicio = hoy.toLocaleDateString('sv-SE')
+
+  const fechaFinDate = new Date(hoy)
+  const diaSemana = hoy.getDay()
+  const diasHastaDomingo = diaSemana === 0 ? 0 : 7 - diaSemana
+
+  fechaFinDate.setDate(hoy.getDate() + diasHastaDomingo)
+
+  const fechaFin = fechaFinDate.toLocaleDateString('sv-SE')
+
   const tareas = await pool.query(
     `SELECT titulo, prioridad, fecha
      FROM tareas
      WHERE completada = false
-     ORDER BY fecha ASC`
+     AND fecha <> 'Sin fecha'
+     AND fecha BETWEEN $1 AND $2
+     ORDER BY fecha ASC`,
+    [fechaInicio, fechaFin]
   )
 
+  const eventos = await pool.query(
+    `SELECT titulo, fecha, hora
+     FROM eventos
+     WHERE fecha BETWEEN $1 AND $2
+     ORDER BY fecha ASC, hora ASC`,
+    [fechaInicio, fechaFin]
+  )
+
+  if (tareas.rows.length === 0 && eventos.rows.length === 0) {
+    return res.json({
+      respuesta: '🎉 No tienes tareas ni eventos esta semana.',
+      accion: 'consultar_semana',
+    })
+  }
+
+  let respuesta = `📆 Esto tienes desde hoy hasta el domingo:\n\n`
+
+  if (tareas.rows.length > 0) {
+    respuesta += '✅ Tareas:\n'
+
+    tareas.rows.forEach((t) => {
+      respuesta += `• ${t.fecha} | ${t.titulo} (${t.prioridad})\n`
+    })
+
+    respuesta += '\n'
+  }
+
+  if (eventos.rows.length > 0) {
+    respuesta += '📅 Eventos:\n'
+
+    eventos.rows.forEach((e) => {
+      respuesta += `• ${e.fecha} ${e.hora || ''} | ${e.titulo}\n`
+    })
+  }
+
+  return res.json({
+    respuesta,
+    accion: 'consultar_semana',
+  })
+}
+
+if (decision.accion === 'consultar_proximos_7_dias') {
+  const hoy = new Date()
+  const fechaInicio = hoy.toLocaleDateString('sv-SE')
+
+  const fechaFinDate = new Date(hoy)
+  fechaFinDate.setDate(hoy.getDate() + 7)
+
+  const fechaFin = fechaFinDate.toLocaleDateString('sv-SE')
+
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND fecha <> 'Sin fecha'
+     AND fecha BETWEEN $1 AND $2
+     ORDER BY fecha ASC`,
+    [fechaInicio, fechaFin]
+  )
+
+  const eventos = await pool.query(
+    `SELECT titulo, fecha, hora
+     FROM eventos
+     WHERE fecha BETWEEN $1 AND $2
+     ORDER BY fecha ASC, hora ASC`,
+    [fechaInicio, fechaFin]
+  )
+
+  if (tareas.rows.length === 0 && eventos.rows.length === 0) {
+    return res.json({
+      respuesta: '🎉 No tienes tareas ni eventos en los próximos 7 días.',
+      accion: 'consultar_proximos_7_dias',
+    })
+  }
+
+  let respuesta = `📆 Esto tienes en los próximos 7 días:\n\n`
+
+  if (tareas.rows.length > 0) {
+    respuesta += '✅ Tareas:\n'
+
+    tareas.rows.forEach((t) => {
+      respuesta += `• ${t.fecha} | ${t.titulo} (${t.prioridad})\n`
+    })
+
+    respuesta += '\n'
+  }
+
+  if (eventos.rows.length > 0) {
+    respuesta += '📅 Eventos:\n'
+
+    eventos.rows.forEach((e) => {
+      respuesta += `• ${e.fecha} ${e.hora || ''} | ${e.titulo}\n`
+    })
+  }
+
+  return res.json({
+    respuesta,
+    accion: 'consultar_proximos_7_dias',
+  })
+}
+
+if (decision.accion === 'consultar_mes') {
+
+  const hoy = new Date()
+
+  const año = hoy.getFullYear()
+  const mes = hoy.getMonth()
+
+  const fechaInicio = new Date(año, mes, 1)
+  const fechaFin = new Date(año, mes + 1, 0)
+
+  const inicio = fechaInicio.toLocaleDateString('sv-SE')
+  const fin = fechaFin.toLocaleDateString('sv-SE')
+
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND fecha <> 'Sin fecha'
+     AND fecha BETWEEN $1 AND $2
+     ORDER BY fecha ASC`,
+    [inicio, fin]
+  )
+
+  const eventos = await pool.query(
+    `SELECT titulo, fecha, hora
+     FROM eventos
+     WHERE fecha BETWEEN $1 AND $2
+     ORDER BY fecha ASC, hora ASC`,
+    [inicio, fin]
+  )
+
+  if (tareas.rows.length === 0 && eventos.rows.length === 0) {
+    return res.json({
+      respuesta: '📅 No tienes nada programado este mes.',
+      accion: 'consultar_mes',
+    })
+  }
+
+  let respuesta = '📅 Esto tienes este mes:\n\n'
+
+  if (tareas.rows.length) {
+    respuesta += '✅ Tareas:\n'
+
+    tareas.rows.forEach((t) => {
+      respuesta += `• ${t.fecha} | ${t.titulo} (${t.prioridad})\n`
+    })
+
+    respuesta += '\n'
+  }
+
+  if (eventos.rows.length) {
+    respuesta += '📅 Eventos:\n'
+
+    eventos.rows.forEach((e) => {
+      respuesta += `• ${e.fecha} ${e.hora || ''} | ${e.titulo}\n`
+    })
+  }
+
+  return res.json({
+    respuesta,
+    accion: 'consultar_mes',
+  })
+}
+
+if (decision.accion === 'consultar_dia_mas_ocupado') {
+
+  const tareas = await pool.query(
+    `SELECT fecha
+     FROM tareas
+     WHERE completada = false
+     AND fecha <> 'Sin fecha'`
+  )
+
+  const eventos = await pool.query(
+    `SELECT fecha
+     FROM eventos`
+  )
+
+  const contador = {}
+
+  tareas.rows.forEach((t) => {
+    contador[t.fecha] = (contador[t.fecha] || 0) + 1
+  })
+
+  eventos.rows.forEach((e) => {
+    contador[e.fecha] = (contador[e.fecha] || 0) + 1
+  })
+
+  if (Object.keys(contador).length === 0) {
+    return res.json({
+      respuesta: 'No tienes tareas ni eventos programados.',
+      accion: 'consultar_dia_mas_ocupado',
+    })
+  }
+
+  let mejorFecha = null
+  let maximo = 0
+
+  Object.entries(contador).forEach(([fecha, cantidad]) => {
+    if (cantidad > maximo) {
+      mejorFecha = fecha
+      maximo = cantidad
+    }
+  })
+
+  const tareasDia = await pool.query(
+    `SELECT titulo
+     FROM tareas
+     WHERE fecha = $1
+     AND completada = false`,
+    [mejorFecha]
+  )
+
+  const eventosDia = await pool.query(
+    `SELECT titulo,hora
+     FROM eventos
+     WHERE fecha = $1`,
+    [mejorFecha]
+  )
+
+  let respuesta =
+`📅 Tu día más ocupado es el ${mejorFecha}.
+
+Total de actividades: ${maximo}
+
+`
+
+  if (tareasDia.rows.length) {
+    respuesta += '✅ Tareas:\n'
+
+    tareasDia.rows.forEach((t) => {
+      respuesta += `• ${t.titulo}\n`
+    })
+
+    respuesta += '\n'
+  }
+
+  if (eventosDia.rows.length) {
+    respuesta += '📅 Eventos:\n'
+
+    eventosDia.rows.forEach((e) => {
+      respuesta += `• ${e.titulo} ${e.hora || ''}\n`
+    })
+  }
+
+  return res.json({
+    respuesta,
+    accion: 'consultar_dia_mas_ocupado',
+  })
+}
+
+if (decision.accion === 'adelantar_tareas') {
+  const hoy = new Date().toLocaleDateString('sv-SE')
+
+  const mananaDate = new Date()
+  mananaDate.setDate(mananaDate.getDate() + 1)
+  const manana = mananaDate.toLocaleDateString('sv-SE')
+
+  const tareasHoy = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND fecha = $1`,
+    [hoy]
+  )
+
+  const eventosHoy = await pool.query(
+    `SELECT titulo, hora
+     FROM eventos
+     WHERE fecha = $1`,
+    [hoy]
+  )
+
+  const tareasAtrasadas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND fecha <> 'Sin fecha'
+     AND fecha < $1
+     ORDER BY
+       CASE
+         WHEN prioridad = 'Alta' THEN 1
+         WHEN prioridad = 'Media' THEN 2
+         WHEN prioridad = 'Baja' THEN 3
+         ELSE 4
+       END,
+       fecha ASC
+     LIMIT 3`,
+    [hoy]
+  )
+
+  const proximasTareas = await pool.query(
+  `SELECT titulo, prioridad, fecha
+   FROM tareas
+   WHERE completada = false
+   AND fecha > $1
+   AND fecha <> 'Sin fecha'
+   ORDER BY fecha ASC,
+   CASE
+      WHEN prioridad='Alta' THEN 1
+      WHEN prioridad='Media' THEN 2
+      ELSE 3
+   END
+   LIMIT 3`,
+  [hoy]
+)
+
+  const cargaHoy =
+    tareasHoy.rows.length + eventosHoy.rows.length
+
+  if (cargaHoy >= 6) {
+    return res.json({
+      respuesta:
+        `Hoy ya tienes bastante carga (${cargaHoy} actividades). ` +
+        `No te recomiendo adelantar más cosas. Mejor céntrate en lo de hoy.`,
+      accion: 'adelantar_tareas',
+    })
+  }
+
+  if (tareasAtrasadas.rows.length > 0) {
+    let respuesta =
+      `⚠️ Antes de adelantar cosas nuevas, te recomiendo ponerte al día con estas tareas atrasadas:\n\n`
+
+    tareasAtrasadas.rows.forEach((t) => {
+      respuesta += `• ${t.titulo} (${t.prioridad}) - vencía el ${t.fecha}\n`
+    })
+
+    return res.json({
+      respuesta,
+      accion: 'adelantar_tareas',
+    })
+  }
+
+  if (cargaHoy <= 2 && proximasTareas.rows.length > 0) {
+    let respuesta =
+      `Hoy tienes poca carga (${cargaHoy} actividades). Podrías adelantar alguna tarea de mañana:\n\n`
+
+    proximasTareas.rows.forEach((t) => {
+      respuesta += `• ${t.titulo} (${t.prioridad})\n`
+    })
+
+    return res.json({
+      respuesta,
+      accion: 'adelantar_tareas',
+    })
+  }
+
+  return res.json({
+    respuesta:
+      `Tu día está bastante equilibrado (${cargaHoy} actividades). ` +
+      `No hace falta adelantar tareas; mantén el plan actual.`,
+    accion: 'adelantar_tareas',
+  })
+}
+
+
+if (decision.accion === 'consultar_tareas_atrasadas') {
+  const hoy = new Date().toLocaleDateString('sv-SE')
+
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND fecha <> 'Sin fecha'
+     AND fecha < $1
+     ORDER BY fecha ASC`,
+    [hoy]
+  )
+
+  const respuesta = tareas.rows.length
+    ? `⚠️ Tareas atrasadas:\n\n` +
+      tareas.rows
+        .map(
+          (t) =>
+            `• ${t.titulo} (${t.prioridad}) - vencía el ${t.fecha}`
+        )
+        .join('\n')
+    : '🎉 No tienes tareas atrasadas.'
+
+  return res.json({
+    respuesta,
+    accion: 'consultar_tareas_atrasadas',
+  })
+}
+
+if (decision.accion === 'consultar_tareas_importantes') {
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     AND prioridad = 'Alta'
+     ORDER BY
+       CASE
+         WHEN fecha = 'Sin fecha' THEN 1
+         ELSE 0
+       END,
+       fecha ASC`
+  )
+
+  const respuesta = tareas.rows.length
+    ? `🔥 Tareas importantes pendientes:\n\n` +
+      tareas.rows
+        .map(
+          (t) =>
+            `• ${t.titulo} - ${t.fecha || 'Sin fecha'}`
+        )
+        .join('\n')
+    : '🎉 No tienes tareas importantes pendientes.'
+
+  return res.json({
+    respuesta,
+    accion: 'consultar_tareas_importantes',
+  })
+}
+
+
+
+if (decision.accion === 'consultar_tareas') {
+  const tareas = await pool.query(
+  `SELECT titulo, prioridad, fecha
+   FROM tareas
+   WHERE completada = false
+   ORDER BY
+     CASE
+       WHEN fecha <> 'Sin fecha' AND fecha < $1 THEN 1
+       WHEN fecha = $1 THEN 2
+       WHEN prioridad = 'Alta' THEN 3
+       WHEN prioridad = 'Media' THEN 4
+       WHEN prioridad = 'Baja' THEN 5
+       ELSE 6
+     END,
+     fecha ASC`,
+  [hoy]
+)
   const texto = tareas.rows.length
     ? tareas.rows
         .map(
@@ -1124,29 +1780,46 @@ return res.json({
     if (decision.accion === 'crear_tarea') {
   decision.titulo = mensaje
     .toLowerCase()
+
     .replace('creame', '')
     .replace('créame', '')
     .replace('crea', '')
     .replace('crear', '')
+
+    .replace('una tarea de', '')
+    .replace('una tarea para', '')
     .replace('una tarea', '')
+
+    .replace('tarea de', '')
+    .replace('tarea para', '')
     .replace('tarea', '')
+
+    .replace('de estudio', 'estudiar')
+    .replace('para estudiar', 'estudiar')
+
     .replace('para mañana', '')
     .replace('mañana', '')
     .replace('para hoy', '')
     .replace('hoy', '')
     .replace('pasado mañana', '')
+
     .replace('con prioridad alta', '')
     .replace('prioridad alta', '')
     .replace('con prioridad media', '')
     .replace('prioridad media', '')
     .replace('con prioridad baja', '')
     .replace('prioridad baja', '')
+
     .replace(/a las .*/i, '')
+
+    .replace(/\s+/g, ' ')
     .trim()
 
+  // Primera letra en mayúscula
   decision.titulo =
     decision.titulo.charAt(0).toUpperCase() +
     decision.titulo.slice(1)
+
 
   const prioridad = decision.prioridad || 'Alta'
 
