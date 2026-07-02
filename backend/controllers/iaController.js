@@ -57,6 +57,10 @@ consultar_proximos_7_dias,
 consultar_mes,
 consultar_dia_mas_ocupado,
 adelantar_tareas,
+priorizar_tareas,
+resumen_dia,
+tiempo_libre,
+Duración estimada,
 responder.
 
 
@@ -101,6 +105,9 @@ Reglas:
 - Si pregunta "qué tengo este mes", "agenda de este mes", "qué hay este mes" o "qué me queda este mes" -> consultar_mes.
 - Si pregunta cuál es su día más ocupado, qué día tiene más cosas o cuándo está más ocupado -> consultar_dia_mas_ocupado.
 - Si pregunta "qué puedo adelantar hoy", "puedo adelantar algo", "qué puedo avanzar hoy" o "qué tarea puedo adelantar" -> adelantar_tareas.
+- Si pregunta "qué debería hacer primero", "qué hago primero", "qué tarea hago primero", "por dónde empiezo" o "qué es lo más importante ahora" -> priorizar_tareas.
+- Si el usuario pregunta "¿cómo tengo el día?", "¿cómo va mi día?", "¿qué tal tengo el día?", "¿cómo está mi agenda hoy?" o "¿cómo voy hoy?" -> resumen_dia.
+- Si el usuario dice "tengo una hora libre", "tengo dos horas libres", "tengo tiempo libre", "qué puedo hacer en una hora", "qué hago si tengo dos horas", "qué hago en mi tiempo libre" -> tiempo_libre.
 - Limpia el título.
 
 Fechas:
@@ -166,9 +173,39 @@ const borrarPorTitulo = async (tabla, titulo) => {
 }
 
 const obtenerFecha = (mensaje, fechaIA, usarHoyPorDefecto = false) => {
-  if (fechaIA) return fechaIA
+  if (fechaIA && fechaIA !== 'Sin fecha') return fechaIA
 
   const texto = mensaje.toLowerCase()
+
+  const meses = {
+  enero: 0,
+  febrero: 1,
+  marzo: 2,
+  abril: 3,
+  mayo: 4,
+  junio: 5,
+  julio: 6,
+  agosto: 7,
+  septiembre: 8,
+  octubre: 9,
+  noviembre: 10,
+  diciembre: 11,
+}
+
+const fechaConMes = texto.match(
+  /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/
+)
+
+if (fechaConMes) {
+  const dia = Number(fechaConMes[1])
+  const mes = meses[fechaConMes[2]]
+
+  const fecha = new Date()
+  fecha.setMonth(mes)
+  fecha.setDate(dia)
+
+  return fecha.toLocaleDateString('sv-SE')
+}
 
   if (texto.includes('pasado mañana')) {
     const fecha = new Date()
@@ -185,6 +222,21 @@ const obtenerFecha = (mensaje, fechaIA, usarHoyPorDefecto = false) => {
   if (texto.includes('hoy')) {
     return new Date().toLocaleDateString('sv-SE')
   }
+
+  const diaSolo = texto.match(/(?:para el|el día|el)\s+(\d{1,2})\b/i)
+
+if (diaSolo) {
+  const hoy = new Date()
+  const dia = Number(diaSolo[1])
+
+  const fecha = new Date(
+    hoy.getFullYear(),
+    hoy.getMonth(),
+    dia
+  )
+
+  return fecha.toLocaleDateString('sv-SE')
+}
 
     const dias = {
     domingo: 0,
@@ -552,6 +604,55 @@ if (
 }
 
 if (
+  textoMensaje.includes('qué debería hacer primero') ||
+  textoMensaje.includes('que deberia hacer primero') ||
+  textoMensaje.includes('qué hago primero') ||
+  textoMensaje.includes('que hago primero') ||
+  textoMensaje.includes('qué tarea hago primero') ||
+  textoMensaje.includes('que tarea hago primero') ||
+  textoMensaje.includes('por dónde empiezo') ||
+  textoMensaje.includes('por donde empiezo') ||
+  textoMensaje.includes('qué es lo más importante ahora') ||
+  textoMensaje.includes('que es lo mas importante ahora')
+) {
+  decision.accion = 'priorizar_tareas'
+}
+
+if (
+  textoMensaje.includes('cómo tengo el día') ||
+  textoMensaje.includes('como tengo el dia') ||
+  textoMensaje.includes('qué tal tengo el día') ||
+  textoMensaje.includes('que tal tengo el dia') ||
+  textoMensaje.includes('cómo va mi día') ||
+  textoMensaje.includes('como va mi dia') ||
+  textoMensaje.includes('cómo voy hoy') ||
+  textoMensaje.includes('como voy hoy') ||
+  textoMensaje.includes('cómo está mi agenda hoy') ||
+  textoMensaje.includes('como esta mi agenda hoy')
+) {
+  decision.accion = 'resumen_dia'
+}
+
+if (
+  textoMensaje.includes('tiempo libre') ||
+  textoMensaje.includes('hora libre') ||
+  textoMensaje.includes('horas libres') ||
+  textoMensaje.includes('tengo 1 hora') ||
+  textoMensaje.includes('tengo una hora') ||
+  textoMensaje.includes('tengo 2 horas') ||
+  textoMensaje.includes('tengo dos horas') ||
+  textoMensaje.includes('tengo 3 horas') ||
+  textoMensaje.includes('tengo tres horas') ||
+  textoMensaje.includes('esta tarde') ||
+  textoMensaje.includes('esta mañana') ||
+  textoMensaje.includes('un rato libre') ||
+  textoMensaje.includes('qué puedo hacer') ||
+  textoMensaje.includes('que puedo hacer')
+) {
+  decision.accion = 'tiempo_libre'
+}
+
+if (
   textoMensaje.includes('próximos 7 días') ||
   textoMensaje.includes('proximos 7 dias') ||
   textoMensaje.includes('próxima semana') ||
@@ -665,8 +766,251 @@ if (
     .replace('para hoy', '')
     .replace('hoy', '')
     .replace('?', '')
+    
     .trim()
 }
+
+if (decision.accion === 'priorizar_tareas') {
+  const hoy = new Date().toLocaleDateString('sv-SE')
+
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     ORDER BY
+       CASE
+         WHEN fecha <> 'Sin fecha' AND fecha < $1 THEN 1
+         WHEN fecha = $1 THEN 2
+         WHEN prioridad = 'Alta' THEN 3
+         WHEN prioridad = 'Media' THEN 4
+         WHEN prioridad = 'Baja' THEN 5
+         ELSE 6
+       END,
+       fecha ASC
+     LIMIT 5`,
+    [hoy]
+  )
+
+  if (tareas.rows.length === 0) {
+  return res.json({
+    respuesta:
+      '🎉 No tienes tareas pendientes. Puedes tomarte el día con calma.',
+    accion: 'priorizar_tareas',
+  })
+}
+
+let respuesta = '🧠 He analizado tus tareas pendientes.\n\n'
+
+const atrasadas = tareas.rows.filter(
+  (t) => t.fecha && t.fecha !== 'Sin fecha' && t.fecha < hoy
+).length
+
+const hoyCount = tareas.rows.filter(
+  (t) => t.fecha === hoy
+).length
+
+const futuras = tareas.rows.filter(
+  (t) => t.fecha && t.fecha !== 'Sin fecha' && t.fecha > hoy
+).length
+
+respuesta += '📊 Resumen\n'
+respuesta += `• ${atrasadas} atrasadas\n`
+respuesta += `• ${hoyCount} para hoy\n`
+respuesta += `• ${futuras} próximas\n\n`
+
+respuesta += '📋 Orden recomendado:\n\n'
+
+tareas.rows.forEach((t, index) => {
+  const puesto =
+    index === 0
+      ? '🥇'
+      : index === 1
+        ? '🥈'
+        : index === 2
+          ? '🥉'
+          : `${index + 1}.`
+
+  respuesta += `${puesto} ${t.titulo}\n`
+
+  if (t.fecha && t.fecha !== 'Sin fecha' && t.fecha < hoy) {
+    respuesta += '⚠️ Atrasada\n'
+  } else if (t.fecha === hoy) {
+    respuesta += '📅 Hoy\n'
+  } else if (t.prioridad === 'Alta') {
+    respuesta += '🔥 Prioridad alta\n'
+  } else if (t.prioridad === 'Media') {
+    respuesta += '🟡 Prioridad media\n'
+  } else {
+    respuesta += '🟢 Prioridad baja\n'
+  }
+
+  if (t.fecha && t.fecha !== 'Sin fecha') {
+    respuesta += `🗓 ${t.fecha}\n`
+  } else {
+    respuesta += 'Sin fecha límite\n'
+  }
+
+  respuesta += '\n'
+})
+
+const primera = tareas.rows[0]
+const segunda = tareas.rows[1]
+
+respuesta += '📌 Mi consejo\n\n'
+respuesta += `Empieza por "${primera.titulo}". `
+
+if (primera.fecha && primera.fecha !== 'Sin fecha' && primera.fecha < hoy) {
+  respuesta +=
+    'Es la más urgente porque ya está atrasada y quitarla de encima debería ser tu prioridad.'
+} else if (primera.fecha === hoy) {
+  respuesta +=
+    'Vence hoy, así que cuanto antes la completes, más tranquilo estarás el resto del día.'
+} else if (primera.prioridad === 'Alta') {
+  respuesta +=
+    'Es de prioridad alta, así que merece ser lo primero.'
+} else {
+  respuesta +=
+    'Es una buena primera opción para empezar con algo claro.'
+}
+
+if (segunda) {
+  respuesta += `\n\nDespués seguiría con "${segunda.titulo}", para mantener un ritmo constante y aprovechar el tiempo.`
+}
+
+if (atrasadas > 0) {
+  respuesta +=
+    '\n\n💪 Si hoy consigues eliminar las tareas atrasadas, volverás a estar completamente al día.'
+} else if (hoyCount > 0) {
+  respuesta +=
+    '\n\n💪 Si completas las tareas de hoy, tendrás una agenda mucho más despejada para los próximos días.'
+} else {
+  respuesta +=
+    '\n\n🎯 Vas bien organizado. Mantén este ritmo.'
+}
+
+return res.json({
+  respuesta,
+  accion: 'priorizar_tareas',
+})}
+
+if (decision.accion === 'resumen_dia') {
+  const hoy = new Date().toLocaleDateString('sv-SE')
+
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad
+     FROM tareas
+     WHERE completada = false
+     AND fecha = $1`,
+    [hoy]
+  )
+
+  const eventos = await pool.query(
+    `SELECT titulo, hora
+     FROM eventos
+     WHERE fecha = $1`,
+    [hoy]
+  )
+
+  const altas = tareas.rows.filter(
+    (t) => t.prioridad === 'Alta'
+  ).length
+
+  const total = tareas.rows.length + eventos.rows.length
+
+  const predominanEventos =
+  eventos.rows.length > tareas.rows.length
+
+const predominanTareas =
+  tareas.rows.length > eventos.rows.length
+
+  let respuesta = '📊 Resumen de hoy\n\n'
+
+  respuesta += `📝 Tareas: ${tareas.rows.length}\n`
+  respuesta += `📅 Eventos: ${eventos.rows.length}\n`
+  respuesta += `🔥 Prioridad alta: ${altas}\n\n`
+
+  if (total === 0) {
+
+  respuesta +=
+    '🎉 Hoy no tienes nada planificado.\n\n'
+
+  respuesta +=
+    '💡 Es un buen día para descansar o adelantar tareas de los próximos días.'
+
+}
+else if (total <= 2) {
+
+  respuesta +=
+    '🟢 Hoy tienes un día bastante tranquilo.\n\n'
+
+  respuesta +=
+    'Podrás hacer tus tareas sin prisas.'
+
+}
+else if (total <= 5) {
+
+  respuesta +=
+    '🟡 Hoy tienes una carga equilibrada.\n\n'
+
+  respuesta +=
+    'Si mantienes el ritmo, terminarás el día sin problemas.'
+
+}
+else {
+
+  respuesta +=
+    '🔴 Hoy tienes un día bastante cargado.\n\n'
+
+  respuesta +=
+    'Mi consejo es que te centres primero en las tareas importantes y evites añadir más trabajo.'
+
+}
+
+if (predominanEventos) {
+
+  respuesta +=
+    '\n\n📅 Hoy gran parte de tu tiempo estará ocupado por eventos.'
+
+}
+else if (predominanTareas) {
+
+  respuesta +=
+    '\n\n📝 Hoy el trabajo principal estará en tus tareas pendientes.'
+
+}
+else if (total > 0) {
+
+  respuesta +=
+    '\n\n⚖️ Hoy tienes un buen equilibrio entre tareas y eventos.'
+
+}
+
+respuesta += '\n\n💡 Siguiente paso recomendado:\n'
+
+if (altas > 0) {
+
+  respuesta +=
+    'Pregúntame "¿Qué tarea hago primero?" y te diré por cuál empezar.'
+
+}
+else if (total <= 2) {
+
+  respuesta +=
+    'Como hoy tienes poco trabajo, también puedes preguntarme "¿Qué puedo adelantar hoy?".'
+
+}
+else {
+
+  respuesta +=
+    'Cuando termines una tarea importante, vuelve a preguntarme y reorganizaremos el resto del día.'
+}
+  return res.json({
+    respuesta,
+    accion: 'resumen_dia',
+  })
+}
+
+
 
 if (decision.accion === 'consultar_semana') {
   const hoy = new Date()
@@ -1777,43 +2121,117 @@ return res.json({
       })
     }
 
+    if (decision.accion === 'tiempo_libre') {
+  const hoy = new Date().toLocaleDateString('sv-SE')
+
+  const tareas = await pool.query(
+    `SELECT titulo, prioridad, fecha
+     FROM tareas
+     WHERE completada = false
+     ORDER BY
+       CASE
+         WHEN fecha <> 'Sin fecha' AND fecha < $1 THEN 1
+         WHEN fecha = $1 THEN 2
+         WHEN prioridad = 'Alta' THEN 3
+         WHEN prioridad = 'Media' THEN 4
+         ELSE 5
+       END,
+       fecha ASC
+     LIMIT 3`,
+    [hoy]
+  )
+
+  if (tareas.rows.length === 0) {
+    return res.json({
+      respuesta:
+        '🎉 No tienes tareas pendientes. Aprovecha ese rato para descansar o hacer algo que te guste.',
+      accion: 'tiempo_libre',
+    })
+  }
+
+  let respuesta =
+    '⏳ Si tienes un rato libre, yo aprovecharía para avanzar estas tareas:\n\n'
+
+  tareas.rows.forEach((t, index) => {
+    respuesta += `${index + 1}. ${t.titulo} (${t.prioridad})`
+
+    if (t.fecha && t.fecha !== 'Sin fecha') {
+      respuesta += ` - ${t.fecha}`
+    }
+
+    respuesta += '\n'
+  })
+
+  respuesta +=
+    '\n💡 No te pongo un horario exacto porque todavía no sabemos la duración estimada de cada tarea. De momento, te recomiendo empezar por la primera y avanzar lo que puedas.'
+
+  return res.json({
+    respuesta,
+    accion: 'tiempo_libre',
+  })
+}
+
     if (decision.accion === 'crear_tarea') {
   decision.titulo = mensaje
-    .toLowerCase()
+  .toLowerCase()
+  .replace('creame', '')
+  .replace('créame', '')
+  .replace('crea', '')
+  .replace('crear', '')
 
-    .replace('creame', '')
-    .replace('créame', '')
-    .replace('crea', '')
-    .replace('crear', '')
+  .replace(/para el \d{1,2} de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi, '')
+.replace(/el \d{1,2} de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi, '')
+.replace(/\d{1,2} de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/gi, '')
 
-    .replace('una tarea de', '')
-    .replace('una tarea para', '')
-    .replace('una tarea', '')
+  .replace('una tarea de', '')
+  .replace('una tarea para', '')
+  .replace('una tarea', '')
+  .replace('la tarea de', '')
+  .replace('la tarea para', '')
+  .replace('la tarea', '')
+  .replace('el tarea', '')
 
-    .replace('tarea de', '')
-    .replace('tarea para', '')
-    .replace('tarea', '')
+  
 
-    .replace('de estudio', 'estudiar')
-    .replace('para estudiar', 'estudiar')
+  .replace('tarea de', '')
+  .replace('tarea para', '')
+  .replace('tarea', '')
 
-    .replace('para mañana', '')
-    .replace('mañana', '')
-    .replace('para hoy', '')
-    .replace('hoy', '')
-    .replace('pasado mañana', '')
+  .replace('de estudio', 'estudiar')
+  .replace('para estudiar', 'estudiar')
 
-    .replace('con prioridad alta', '')
-    .replace('prioridad alta', '')
-    .replace('con prioridad media', '')
-    .replace('prioridad media', '')
-    .replace('con prioridad baja', '')
-    .replace('prioridad baja', '')
+  .replace('para pasado mañana', '')
+  .replace('pasado mañana', '')
+  .replace('para mañana', '')
+  .replace('mañana', '')
+  .replace('para hoy', '')
+  .replace('hoy', '')
 
-    .replace(/a las .*/i, '')
+  .replace(/para el \d{1,2}\/\d{1,2}\/\d{4}/gi, '')
+  .replace(/\d{1,2}\/\d{1,2}\/\d{4}/g, '')
 
-    .replace(/\s+/g, ' ')
-    .trim()
+  .replace('con prioridad alta', '')
+  .replace('prioridad alta', '')
+  .replace('con prioridad media', '')
+  .replace('prioridad media', '')
+  .replace('con prioridad baja', '')
+  .replace('prioridad baja', '')
+
+  .replace(/a las .*/i, '')
+
+  .replace(/^la\s+/i, '')
+  .replace(/^el\s+/i, '')
+  .replace(/^los\s+/i, '')
+  .replace(/^las\s+/i, '')
+  .replace(/para el \d{1,2}\/\d{1,2}\/\d{4}/gi, '')
+.replace(/\d{1,2}\/\d{1,2}\/\d{4}/g, '')
+
+.replace(/el día \d{1,2}/gi, '')
+
+
+  .replace(/\s+/g, ' ')
+  
+  .trim()
 
   // Primera letra en mayúscula
   decision.titulo =
@@ -1823,41 +2241,64 @@ return res.json({
 
   const prioridad = decision.prioridad || 'Alta'
 
-  const clase =
-    prioridad === 'Alta'
-      ? 'high'
-      : prioridad === 'Media'
-        ? 'medium'
-        : ''
+const fechaTarea = obtenerFecha(mensaje, decision.fecha)
 
-  const result = await pool.query(
-    `INSERT INTO tareas (
-      titulo,
-      fecha,
-      prioridad,
-      categoria,
-      notas,
-      clase,
-      completada
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-    RETURNING *`,
-    [
-      decision.titulo || 'Nueva tarea',
-      obtenerFecha(mensaje, decision.fecha),
-      prioridad,
-      decision.categoria || 'Personal',
-      '',
-      clase,
-      false,
-    ]
-  )
+const tareaDuplicada = await pool.query(
+  `SELECT titulo
+   FROM tareas
+   WHERE completada = false
+   AND LOWER(titulo) = LOWER($1)
+   AND fecha = $2`,
+  [
+    decision.titulo || 'Nueva tarea',
+    fechaTarea,
+  ]
+)
 
+if (tareaDuplicada.rows.length > 0) {
   return res.json({
-    respuesta: `✅ He creado la tarea "${decision.titulo}".`,
-    accion: 'crear_tarea',
-    data: result.rows[0],
+    respuesta:
+      `⚠️ Ya tienes una tarea llamada "${decision.titulo}" para esa fecha.\n\n` +
+      `No la he creado para evitar duplicados.`,
+    accion: 'tarea_duplicada',
   })
+}
+
+const clase =
+  prioridad === 'Alta'
+    ? 'high'
+    : prioridad === 'Media'
+      ? 'medium'
+      : ''
+
+const result = await pool.query(
+  `INSERT INTO tareas (
+    titulo,
+    fecha,
+    prioridad,
+    categoria,
+    notas,
+    clase,
+    completada
+  )
+  VALUES ($1, $2, $3, $4, $5, $6, $7)
+  RETURNING *`,
+  [
+    decision.titulo || 'Nueva tarea',
+    fechaTarea,
+    prioridad,
+    decision.categoria || 'Personal',
+    '',
+    clase,
+    false,
+  ]
+)
+
+return res.json({
+  respuesta: `✅ He creado la tarea "${decision.titulo}".`,
+  accion: 'crear_tarea',
+  data: result.rows[0],
+})
 }
 
 if (
@@ -1955,31 +2396,58 @@ if (
     }
 
     if (decision.accion === 'crear_evento') {
-      const result = await pool.query(
-        `INSERT INTO eventos (
-          titulo,
-          fecha,
-          hora,
-          categoria,
-          color
-        )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *`,
-        [
-          decision.titulo || 'Evento',
-          obtenerFecha(mensaje, decision.fecha, true),
-          decision.hora || 'Sin hora',
-          decision.categoria || 'Personal',
-          'pink',
-        ]
-      )
 
+  const fecha = obtenerFecha(mensaje, decision.fecha, true)
+  const hora = decision.hora || 'Sin hora'
+
+  // Comprobar si ya existe un evento a esa hora
+  if (hora !== 'Sin hora') {
+    const conflicto = await pool.query(
+      `SELECT titulo
+       FROM eventos
+       WHERE fecha = $1
+       AND hora = $2`,
+      [fecha, hora]
+    )
+
+    if (conflicto.rows.length > 0) {
       return res.json({
-        respuesta: decision.respuesta || `📅 He creado el evento "${decision.titulo}".`,
-        accion: 'crear_evento',
-        data: result.rows[0],
+        accion: 'conflicto_horario',
+        respuesta:
+          `⚠️ Ya tienes un evento a las ${hora}.\n\n` +
+          `• ${conflicto.rows[0].titulo}\n\n` +
+          `¿Quieres crear el nuevo igualmente?`,
       })
     }
+  }
+
+  const result = await pool.query(
+    `INSERT INTO eventos (
+      titulo,
+      fecha,
+      hora,
+      categoria,
+      color
+    )
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *`,
+    [
+      decision.titulo || 'Evento',
+      fecha,
+      hora,
+      decision.categoria || 'Personal',
+      'pink',
+    ]
+  )
+
+  return res.json({
+    respuesta:
+      decision.respuesta ||
+      `📅 He creado el evento "${decision.titulo}".`,
+    accion: 'crear_evento',
+    data: result.rows[0],
+  })
+}
 
     if (decision.accion === 'borrar_evento') {
       const evento = await borrarPorTitulo('eventos', decision.titulo)
@@ -2003,4 +2471,7 @@ if (
     respuesta: `❌ Error real: ${error.message}`,
   })
 }
+
+
 }
+
